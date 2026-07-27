@@ -89,20 +89,37 @@ namespace GwalhoCompiler
         DONE,
         RNDM,
 
-        // ===== 필터 (구간 내 조건 통과값만 남기고 패킹) =====
-        FLES,
-        FLOE,
-        FGOE,
-        FGRT,
-        FEQL,
-        FNQL,
+        // ===== 맵형 비교 (구간의 각 원소를 값과 비교해 그 자리에 1/0 덮어씀, 크기 불변) =====
+        MLES,
+        MLOE,
+        MGOE,
+        MGRT,
+        MEQL,
+        MNQL,
 
-        // ===== 맵 (구간 전체에 연산 적용) =====
+        // ===== 맵 (구간 전체에 산술연산 적용) =====
         MPLS,
         MMNS,
         MMLT,
         MDIV,
         MMDL,
+
+        // ===== 비트 맵 (구간 전체에 비트연산 적용, B계열의 배열버전. BFLR/BFLW/BITR/BITW 제외) =====
+        MAND,
+        MORR,
+        MXOR,
+        MNOT,
+        MNOR,
+        MNND,
+        MXNR,
+        MSHL,
+        MROL,
+        MSHR,
+        MROR,
+        MUSR,
+
+        // ===== 마스크 기반 필터 (다른 배열을 마스크로 써서 0인 자리만 지우고 패킹) =====
+        MASK,
 
         // ===== 배열 단위 유틸 =====
         CLON,
@@ -793,16 +810,16 @@ namespace GwalhoCompiler
             ["CONT"] = new(OP.CONT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["FILL"] = new(OP.FILL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["FIND"] = new(OP.FIND, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["SORT"] = new(OP.SORT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["SORT"] = new(OP.SORT, R('A'), R('B'), R('C'), R2('A')),
             ["RNDM"] = new(OP.RNDM, R('A'), R('B'), R('C')),
 
-            // ===== 필터 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
-            ["FLES"] = new(OP.FLES, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["FLOE"] = new(OP.FLOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["FGOE"] = new(OP.FGOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["FGRT"] = new(OP.FGRT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["FEQL"] = new(OP.FEQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
-            ["FNQL"] = new(OP.FNQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            // ===== 맵형 비교 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
+            ["MLES"] = new(OP.MLES, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MLOE"] = new(OP.MLOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MGOE"] = new(OP.MGOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MGRT"] = new(OP.MGRT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MEQL"] = new(OP.MEQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MNQL"] = new(OP.MNQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
 
             // ===== 맵 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
             ["MPLS"] = new(OP.MPLS, R('A'), R('B'), R('C'), R2('A'), R2('B')),
@@ -810,6 +827,23 @@ namespace GwalhoCompiler
             ["MMLT"] = new(OP.MMLT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["MDIV"] = new(OP.MDIV, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["MMDL"] = new(OP.MMDL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+
+            // ===== 비트 맵 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
+            ["MAND"] = new(OP.MAND, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MORR"] = new(OP.MORR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MXOR"] = new(OP.MXOR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MNOT"] = new(OP.MNOT, R('A'), R('B'), R('C'), R2('A')),
+            ["MNOR"] = new(OP.MNOR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MNND"] = new(OP.MNND, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MXNR"] = new(OP.MXNR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MSHL"] = new(OP.MSHL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MROL"] = new(OP.MROL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MSHR"] = new(OP.MSHR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MROR"] = new(OP.MROR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MUSR"] = new(OP.MUSR, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+
+            // ===== 마스크 필터 : (결과, 대상ID, 대상시작, 마스크ID, 마스크시작, 길이) — COPY와 동일 시그니처 =====
+            ["MASK"] = new(OP.MASK, R('A'), R('B'), R('C'), R2('A'), R2('B'), R2('C')),
 
             // ===== 배열 단위 유틸 =====
             ["CLON"] = new(OP.CLON, R('A'), R('B')),
