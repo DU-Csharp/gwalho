@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text; 
+using System.Text;
+// 이름을 몇번이나 바꾸는 걸까
 namespace GwalhoCompiler
 {
     // =====================================================
@@ -21,7 +22,7 @@ namespace GwalhoCompiler
         public byte Exists;
     }
 
-   
+    // ⚠️ VM(BXVM)의 OP enum과 "순서/값"이 완전히 동일해야 합니다.
     public enum OP : int
     {
         NOPE,
@@ -87,6 +88,27 @@ namespace GwalhoCompiler
         SWAP,
         DONE,
         RNDM,
+
+        // ===== 필터 (구간 내 조건 통과값만 남기고 패킹) =====
+        FLES,
+        FLOE,
+        FGOE,
+        FGRT,
+        FEQL,
+        FNQL,
+
+        // ===== 맵 (구간 전체에 연산 적용) =====
+        MPLS,
+        MMNS,
+        MMLT,
+        MDIV,
+        MMDL,
+
+        // ===== 배열 단위 유틸 =====
+        CLON,
+        CHNG,
+        RVRS,
+        SHFL,
 
 
 
@@ -773,6 +795,28 @@ namespace GwalhoCompiler
             ["FIND"] = new(OP.FIND, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["SORT"] = new(OP.SORT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
             ["RNDM"] = new(OP.RNDM, R('A'), R('B'), R('C')),
+
+            // ===== 필터 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
+            ["FLES"] = new(OP.FLES, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["FLOE"] = new(OP.FLOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["FGOE"] = new(OP.FGOE, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["FGRT"] = new(OP.FGRT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["FEQL"] = new(OP.FEQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["FNQL"] = new(OP.FNQL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+
+            // ===== 맵 : (결과, 배열ID, 시작, 길이, 값) — FILL과 동일 시그니처 =====
+            ["MPLS"] = new(OP.MPLS, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MMNS"] = new(OP.MMNS, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MMLT"] = new(OP.MMLT, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MDIV"] = new(OP.MDIV, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+            ["MMDL"] = new(OP.MMDL, R('A'), R('B'), R('C'), R2('A'), R2('B')),
+
+            // ===== 배열 단위 유틸 =====
+            ["CLON"] = new(OP.CLON, R('A'), R('B')),
+            ["CHNG"] = new(OP.CHNG, R('A'), R('B'), R('C')),
+            ["RVRS"] = new(OP.RVRS, R('A'), R('B')),
+            ["SHFL"] = new(OP.SHFL, R('A'), R('B')),
+
         };
 
         // =====================================================
