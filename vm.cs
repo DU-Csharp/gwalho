@@ -73,20 +73,37 @@ namespace Gwalho
         DONE,
         RNDM,
 
-        // ===== 필터 (구간 내 조건 통과값만 남기고 패킹) =====
-        FLES,
-        FLOE,
-        FGOE,
-        FGRT,
-        FEQL,
-        FNQL,
+        // ===== 맵형 비교 (구간의 각 원소를 값과 비교해 그 자리에 1/0 덮어씀, 크기 불변) =====
+        MLES,
+        MLOE,
+        MGOE,
+        MGRT,
+        MEQL,
+        MNQL,
 
-        // ===== 맵 (구간 전체에 연산 적용) =====
+        // ===== 맵 (구간 전체에 산술연산 적용) =====
         MPLS,
         MMNS,
         MMLT,
         MDIV,
         MMDL,
+
+        // ===== 비트 맵 (구간 전체에 비트연산 적용, B계열의 배열버전. BFLR/BFLW/BITR/BITW 제외) =====
+        MAND,
+        MORR,
+        MXOR,
+        MNOT,
+        MNOR,
+        MNND,
+        MXNR,
+        MSHL,
+        MROL,
+        MSHR,
+        MROR,
+        MUSR,
+
+        // ===== 마스크 기반 필터 (다른 배열을 마스크로 써서 0인 자리만 지우고 패킹) =====
+        MASK,
 
         // ===== 배열 단위 유틸 =====
         CLON,
@@ -158,7 +175,7 @@ namespace Gwalho
         public static int PC = 0;
         public static int HeapTop = 1;
 
-        static readonly System.Random _rng = new System.Random(); // SORT mode=2(무작위) 셔플용
+        static readonly System.Random _rng = new System.Random(); // SORT/SHFL 등에서 쓰는 무작위용
 
         public static delegate*<int*, FRAME*, void>[] Ops;
         static GWVM()
@@ -241,18 +258,33 @@ namespace Gwalho
             Ops[(int)OP.RNDM] = &RNDM;
             Ops[(int)OP.DONE] = &DONE;
 
-            Ops[(int)OP.FLES] = &FLES;
-            Ops[(int)OP.FLOE] = &FLOE;
-            Ops[(int)OP.FGOE] = &FGOE;
-            Ops[(int)OP.FGRT] = &FGRT;
-            Ops[(int)OP.FEQL] = &FEQL;
-            Ops[(int)OP.FNQL] = &FNQL;
+            Ops[(int)OP.MLES] = &MLES;
+            Ops[(int)OP.MLOE] = &MLOE;
+            Ops[(int)OP.MGOE] = &MGOE;
+            Ops[(int)OP.MGRT] = &MGRT;
+            Ops[(int)OP.MEQL] = &MEQL;
+            Ops[(int)OP.MNQL] = &MNQL;
 
             Ops[(int)OP.MPLS] = &MPLS;
             Ops[(int)OP.MMNS] = &MMNS;
             Ops[(int)OP.MMLT] = &MMLT;
             Ops[(int)OP.MDIV] = &MDIV;
             Ops[(int)OP.MMDL] = &MMDL;
+
+            Ops[(int)OP.MAND] = &MAND;
+            Ops[(int)OP.MORR] = &MORR;
+            Ops[(int)OP.MXOR] = &MXOR;
+            Ops[(int)OP.MNOT] = &MNOT;
+            Ops[(int)OP.MNOR] = &MNOR;
+            Ops[(int)OP.MNND] = &MNND;
+            Ops[(int)OP.MXNR] = &MXNR;
+            Ops[(int)OP.MSHL] = &MSHL;
+            Ops[(int)OP.MROL] = &MROL;
+            Ops[(int)OP.MSHR] = &MSHR;
+            Ops[(int)OP.MROR] = &MROR;
+            Ops[(int)OP.MUSR] = &MUSR;
+
+            Ops[(int)OP.MASK] = &MASK;
 
             Ops[(int)OP.CLON] = &CLON;
             Ops[(int)OP.CHNG] = &CHNG;
@@ -1843,9 +1875,9 @@ namespace Gwalho
                 count;
         }
 
-        // ================== 필터 / 맵 공통 로직 ==================
+        // ================== 맵형 비교 공통 로직 ==================
         // mode: 0=< 1=<= 2=>= 3=> 4=== 5=!=
-        private static bool FilterKeep(int mode, int value, int val)
+        private static bool CompareValue(int mode, int value, int val)
         {
             switch (mode)
             {
@@ -1858,12 +1890,10 @@ namespace Gwalho
             }
         }
 
-        // [FLES 등](결과, 배열ID, 시작, 길이, 값) 공통 구현.
-        // 1) 통과할 개수를 먼저 세어(읽기 전용) 결과 길이가 0 이하면 원본을 건드리지 않고 실패.
-        // 2) 구간 안에서 통과값만 앞으로 당겨 패킹.
-        // 3) 구간 뒤에 남은 부분을 당겨진 만큼 앞으로 이동시켜 빈 칸을 메움.
-        // 4) 메타데이터 길이만 줄임 (Base는 그대로 — 이미 줄어들기만 하므로 재할당 불필요).
-        private static bool FilterRange(int id, int start, int length, int val, int mode)
+        // [MLES 등](결과, 배열ID, 시작, 길이, 값) 공통 구현.
+        // 구간의 각 원소를 값과 비교해서 참이면 1, 거짓이면 0을 그 자리에 덮어씀.
+        // MPLS 등과 동일한 "맵" 철학 — 배열 크기는 그대로.
+        private static bool CompareWriteRange(int id, int start, int length, int val, int mode)
         {
             if (!IsValidID(id))
                 return false;
@@ -1878,48 +1908,15 @@ namespace Gwalho
 
             int baseAddr = meta.Base;
 
-            int keepCount = 0;
-
-            for (int i = 0; i < length; i++)
+            for (int i = start; i < start + length; i++)
             {
-                if (FilterKeep(mode, MEMORY[baseAddr + start + i], val))
-                    keepCount++;
+                MEMORY[baseAddr + i] = CompareValue(mode, MEMORY[baseAddr + i], val) ? 1 : 0;
             }
-
-            int removed = length - keepCount;
-            int newLength = meta.Length - removed;
-
-            if (newLength <= 0)
-                return false;
-
-            int writePos = start;
-
-            for (int i = 0; i < length; i++)
-            {
-                int v = MEMORY[baseAddr + start + i];
-
-                if (FilterKeep(mode, v, val))
-                {
-                    MEMORY[baseAddr + writePos] = v;
-                    writePos++;
-                }
-            }
-
-            int tailStart = start + length;
-            int tailLength = meta.Length - tailStart;
-
-            if (tailLength > 0)
-            {
-                Array.Copy(MEMORY, baseAddr + tailStart, MEMORY, baseAddr + writePos, tailLength);
-            }
-
-            meta.Length = newLength;
-            Metadatas[id] = meta;
 
             return true;
         }
 
-        // [MPLS 등](결과, 배열ID, 시작, 길이, 값) 공통 구현. 구간 전체에 연산 적용.
+        // [MPLS 등](결과, 배열ID, 시작, 길이, 값) 공통 구현. 구간 전체에 산술연산 적용.
         // mode: 0=+ 1=- 2=* 3=/ 4=%
         private static bool MapRange(int id, int start, int length, int val, int mode)
         {
@@ -1959,40 +1956,40 @@ namespace Gwalho
             return true;
         }
 
-        static void FLES(int* ip, FRAME* frame)
+        static void MLES(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 0);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 0);
             reg[ip[1]] = ok ? 1 : 0;
-        } // 구간에서 값 미만인 원소만 남기고 패킹
-        static void FLOE(int* ip, FRAME* frame)
+        } // 구간의 각 원소가 값 미만이면 그 자리에 1, 아니면 0
+        static void MLOE(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 1);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 1);
             reg[ip[1]] = ok ? 1 : 0;
         } // 값 이하
-        static void FGOE(int* ip, FRAME* frame)
+        static void MGOE(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 2);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 2);
             reg[ip[1]] = ok ? 1 : 0;
         } // 값 이상
-        static void FGRT(int* ip, FRAME* frame)
+        static void MGRT(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 3);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 3);
             reg[ip[1]] = ok ? 1 : 0;
         } // 값 초과
-        static void FEQL(int* ip, FRAME* frame)
+        static void MEQL(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
             reg[ip[1]] = ok ? 1 : 0;
         } // 값과 같음
-        static void FNQL(int* ip, FRAME* frame)
+        static void MNQL(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
-            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 5);
+            bool ok = CompareWriteRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 5);
             reg[ip[1]] = ok ? 1 : 0;
         } // 값과 다름
 
@@ -2026,6 +2023,211 @@ namespace Gwalho
             bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
             reg[ip[1]] = ok ? 1 : 0;
         } // 구간을 값으로 나눈 나머지
+
+        // ================== 비트 맵 공통 로직 ==================
+        // B계열(BAND 등, 단 BFLR/BFLW/BITR/BITW 제외)의 배열버전.
+        // mode: 0=AND 1=OR 2=XOR 3=NOT(val 무시) 4=NOR 5=NAND 6=XNOR 7=SHL 8=ROL 9=SHR 10=ROR 11=USR
+        private static int BitOp(int mode, int value, int val)
+        {
+            int shift = val & 31;
+
+            switch (mode)
+            {
+                case 0: return value & val;                                            // MAND
+                case 1: return value | val;                                            // MORR
+                case 2: return value ^ val;                                            // MXOR
+                case 3: return ~value;                                                 // MNOT
+                case 4: return ~(value | val);                                         // MNOR
+                case 5: return ~(value & val);                                         // MNND
+                case 6: return ~(value ^ val);                                         // MXNR
+                case 7: return value << shift;                                         // MSHL
+                case 8: return (value << shift) | (int)((uint)value >> (32 - shift));  // MROL
+                case 9: return value >> shift;                                         // MSHR (부호 유지)
+                case 10: return (value >> shift) | (int)((uint)value << (32 - shift)); // MROR
+                default: return (int)((uint)value >> shift);                           // MUSR
+            }
+        }
+
+        // [MAND 등](결과, 배열ID, 시작, 길이, 값) 공통 구현. 구간 전체에 비트연산 적용.
+        private static bool BitMapRange(int id, int start, int length, int val, int mode)
+        {
+            if (!IsValidID(id))
+                return false;
+
+            if (Metadatas[id].Exists == 0)
+                return false;
+
+            var meta = Metadatas[id];
+
+            if (start < 0 || length <= 0 || start + length > meta.Length)
+                return false;
+
+            int baseAddr = meta.Base;
+
+            for (int i = start; i < start + length; i++)
+            {
+                MEMORY[baseAddr + i] = BitOp(mode, MEMORY[baseAddr + i], val);
+            }
+
+            return true;
+        }
+
+        static void MAND(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 0);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간 전체에 값을 비트 AND
+        static void MORR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 1);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 OR
+        static void MXOR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 2);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 XOR
+        static void MNOT(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+      
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], 0, 3);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 not
+        static void MNOR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 NOR
+        static void MNND(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 5);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 NAND
+        static void MXNR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 6);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 비트 XNOR
+        static void MSHL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 7);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 왼쪽 시프트
+        static void MROL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 8);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 왼쪽 회전
+        static void MSHR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 9);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 오른쪽 시프트 (부호 유지)
+        static void MROR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 10);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 오른쪽 회전
+        static void MUSR(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = BitMapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 11);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 오른쪽 시프트 (부호 없음)
+
+        // [MASK](결과, 대상배열ID, 대상시작, 마스크배열ID, 마스크시작, 길이)
+        // 마스크 배열의 [마스크시작, 마스크시작+길이) 구간을 훑어서 0이 아닌 위치만 남기고,
+        // 대상 배열의 [대상시작, 대상시작+길이) 구간을 그만큼 패킹+축소한다.
+        static void MASK(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+
+            int maskId = reg[ip[5]];
+            int maskStart = reg[ip[6]];
+            int targetId = reg[ip[2]];
+            int targetStart = reg[ip[3]];
+            int length = reg[ip[7]];
+
+            reg[ip[1]] = 0;
+
+            if (!IsValidID(maskId) || !IsValidID(targetId))
+                return;
+
+            if (Metadatas[maskId].Exists == 0 || Metadatas[targetId].Exists == 0)
+                return;
+
+            var maskMeta = Metadatas[maskId];
+            var meta = Metadatas[targetId];
+
+            if (length <= 0)
+                return;
+
+            if (maskStart < 0 || maskStart + length > maskMeta.Length)
+                return;
+
+            if (targetStart < 0 || targetStart + length > meta.Length)
+                return;
+
+            int maskBase = maskMeta.Base;
+            int baseAddr = meta.Base;
+
+            // 1) 남길 개수 미리 계산 (읽기 전용 — 실패시 대상 배열 훼손 없음)
+            int keepCount = 0;
+
+            for (int i = 0; i < length; i++)
+            {
+                if (MEMORY[maskBase + maskStart + i] != 0)
+                    keepCount++;
+            }
+
+            int removed = length - keepCount;
+            int newLength = meta.Length - removed;
+
+            if (newLength <= 0)
+                return;
+
+            // 2) 대상 구간 안에서 마스크가 0이 아닌 값만 앞으로 패킹
+            //    (maskId == targetId 이고 구간이 겹치면 패킹 도중 마스크 값이 먼저
+            //     덮여쓰일 수 있으니, 그런 조합으로는 쓰지 않는 걸 권장)
+            int writePos = targetStart;
+
+            for (int i = 0; i < length; i++)
+            {
+                int v = MEMORY[baseAddr + targetStart + i];
+                int m = MEMORY[maskBase + maskStart + i];
+
+                if (m != 0)
+                {
+                    MEMORY[baseAddr + writePos] = v;
+                    writePos++;
+                }
+            }
+
+            // 3) 대상 구간 뒤에 남은 부분을 당겨서 빈 칸 메움
+            int tailStart = targetStart + length;
+            int tailLength = meta.Length - tailStart;
+
+            if (tailLength > 0)
+            {
+                Array.Copy(MEMORY, baseAddr + tailStart, MEMORY, baseAddr + writePos, tailLength);
+            }
+
+            meta.Length = newLength;
+            Metadatas[targetId] = meta;
+
+            reg[ip[1]] = 1;
+        }
 
         static void CLON(int* ip, FRAME* frame)
         {
@@ -2144,7 +2346,7 @@ namespace Gwalho
             }
 
             reg[ip[1]] = 1;
-        } // 배열 전체를 무작위로 섞음 (SORT mode=2와 동일한 Fisher-Yates)
+        } // 배열 전체를 무작위로 섞음 (Fisher-Yates)
 
         static void RNDM(int* ip, FRAME* frame)
         {
@@ -2166,8 +2368,7 @@ namespace Gwalho
         }
         static void SORT(int* ip, FRAME* frame)
         {
-            int* reg =
-                frame->Registers;
+            int* reg = frame->Registers;
 
             // ip[1] = 결과(성공/실패) 레지스터
             int ArrayBlockId =
@@ -2176,13 +2377,9 @@ namespace Gwalho
             int start =
                 reg[ip[3]];
 
-            // ip[4]는 EXTRA 슬롯의 opcode(NOP), ip[5]/ip[6]는 그 슬롯의 A/B필드
+            // ip[5] = EXTRA 슬롯 A필드
             int length =
-
                 reg[ip[5]];
-
-            int mode =
-                reg[ip[6]]; // 0=오름차순 1=내림차순 2=무작위
 
 
             if ((uint)ArrayBlockId >= MAX_ArrayBlock)
@@ -2190,7 +2387,6 @@ namespace Gwalho
 
             if (Metadatas[ArrayBlockId].Exists == 0)
                 return;
-
 
 
             var meta =
@@ -2201,44 +2397,18 @@ namespace Gwalho
                 start + length > meta.Length)
                 return;
 
+
             int baseAddr =
                 meta.Base;
 
-            if (mode == 2)
-            {
-                // Fisher-Yates 셔플
-                for (int i = start + length - 1; i > start; i--)
-                {
-                    int j = start + _rng.Next(i - start + 1);
-
-                    int tmp =
-                        MEMORY[baseAddr + i];
-
-                    MEMORY[baseAddr + i] =
-                        MEMORY[baseAddr + j];
-
-                    MEMORY[baseAddr + j] =
-                        tmp;
-                }
-
-                frame->Registers[ip[1]] = 1;
-                return;
-            }
-
-            bool descending = mode == 1;
 
             for (int i = start; i < start + length - 1; i++)
             {
-                int pick =
-                    i;
+                int pick = i;
 
                 for (int j = i + 1; j < start + length; j++)
                 {
-                    bool better = descending
-                        ? MEMORY[baseAddr + j] > MEMORY[baseAddr + pick]
-                        : MEMORY[baseAddr + j] < MEMORY[baseAddr + pick];
-
-                    if (better)
+                    if (MEMORY[baseAddr + j] < MEMORY[baseAddr + pick])
                     {
                         pick = j;
                     }
@@ -2246,6 +2416,7 @@ namespace Gwalho
 
                 if (pick == i)
                     continue;
+
 
                 int temp =
                     MEMORY[baseAddr + i];
@@ -2256,6 +2427,7 @@ namespace Gwalho
                 MEMORY[baseAddr + pick] =
                     temp;
             }
+
 
             frame->Registers[ip[1]] = 1;
         }
