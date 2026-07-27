@@ -1,4 +1,3 @@
-
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -73,6 +72,27 @@ namespace Gwalho
         SWAP,
         DONE,
         RNDM,
+
+        // ===== 필터 (구간 내 조건 통과값만 남기고 패킹) =====
+        FLES,
+        FLOE,
+        FGOE,
+        FGRT,
+        FEQL,
+        FNQL,
+
+        // ===== 맵 (구간 전체에 연산 적용) =====
+        MPLS,
+        MMNS,
+        MMLT,
+        MDIV,
+        MMDL,
+
+        // ===== 배열 단위 유틸 =====
+        CLON,
+        CHNG,
+        RVRS,
+        SHFL,
 
 
 
@@ -220,6 +240,24 @@ namespace Gwalho
 
             Ops[(int)OP.RNDM] = &RNDM;
             Ops[(int)OP.DONE] = &DONE;
+
+            Ops[(int)OP.FLES] = &FLES;
+            Ops[(int)OP.FLOE] = &FLOE;
+            Ops[(int)OP.FGOE] = &FGOE;
+            Ops[(int)OP.FGRT] = &FGRT;
+            Ops[(int)OP.FEQL] = &FEQL;
+            Ops[(int)OP.FNQL] = &FNQL;
+
+            Ops[(int)OP.MPLS] = &MPLS;
+            Ops[(int)OP.MMNS] = &MMNS;
+            Ops[(int)OP.MMLT] = &MMLT;
+            Ops[(int)OP.MDIV] = &MDIV;
+            Ops[(int)OP.MMDL] = &MMDL;
+
+            Ops[(int)OP.CLON] = &CLON;
+            Ops[(int)OP.CHNG] = &CHNG;
+            Ops[(int)OP.RVRS] = &RVRS;
+            Ops[(int)OP.SHFL] = &SHFL;
 
 
         }
@@ -1805,6 +1843,309 @@ namespace Gwalho
                 count;
         }
 
+        // ================== 필터 / 맵 공통 로직 ==================
+        // mode: 0=< 1=<= 2=>= 3=> 4=== 5=!=
+        private static bool FilterKeep(int mode, int value, int val)
+        {
+            switch (mode)
+            {
+                case 0: return value < val;
+                case 1: return value <= val;
+                case 2: return value >= val;
+                case 3: return value > val;
+                case 4: return value == val;
+                default: return value != val;
+            }
+        }
+
+        // [FLES 등](결과, 배열ID, 시작, 길이, 값) 공통 구현.
+        // 1) 통과할 개수를 먼저 세어(읽기 전용) 결과 길이가 0 이하면 원본을 건드리지 않고 실패.
+        // 2) 구간 안에서 통과값만 앞으로 당겨 패킹.
+        // 3) 구간 뒤에 남은 부분을 당겨진 만큼 앞으로 이동시켜 빈 칸을 메움.
+        // 4) 메타데이터 길이만 줄임 (Base는 그대로 — 이미 줄어들기만 하므로 재할당 불필요).
+        private static bool FilterRange(int id, int start, int length, int val, int mode)
+        {
+            if (!IsValidID(id))
+                return false;
+
+            if (Metadatas[id].Exists == 0)
+                return false;
+
+            var meta = Metadatas[id];
+
+            if (start < 0 || length <= 0 || start + length > meta.Length)
+                return false;
+
+            int baseAddr = meta.Base;
+
+            int keepCount = 0;
+
+            for (int i = 0; i < length; i++)
+            {
+                if (FilterKeep(mode, MEMORY[baseAddr + start + i], val))
+                    keepCount++;
+            }
+
+            int removed = length - keepCount;
+            int newLength = meta.Length - removed;
+
+            if (newLength <= 0)
+                return false;
+
+            int writePos = start;
+
+            for (int i = 0; i < length; i++)
+            {
+                int v = MEMORY[baseAddr + start + i];
+
+                if (FilterKeep(mode, v, val))
+                {
+                    MEMORY[baseAddr + writePos] = v;
+                    writePos++;
+                }
+            }
+
+            int tailStart = start + length;
+            int tailLength = meta.Length - tailStart;
+
+            if (tailLength > 0)
+            {
+                Array.Copy(MEMORY, baseAddr + tailStart, MEMORY, baseAddr + writePos, tailLength);
+            }
+
+            meta.Length = newLength;
+            Metadatas[id] = meta;
+
+            return true;
+        }
+
+        // [MPLS 등](결과, 배열ID, 시작, 길이, 값) 공통 구현. 구간 전체에 연산 적용.
+        // mode: 0=+ 1=- 2=* 3=/ 4=%
+        private static bool MapRange(int id, int start, int length, int val, int mode)
+        {
+            if (!IsValidID(id))
+                return false;
+
+            if (Metadatas[id].Exists == 0)
+                return false;
+
+            var meta = Metadatas[id];
+
+            if (start < 0 || length <= 0 || start + length > meta.Length)
+                return false;
+
+            // MDIV/MMDL 0 나누기 방어 (DIVD/MODL과 동일한 이유)
+            if ((mode == 3 || mode == 4) && val == 0)
+                return false;
+
+            int baseAddr = meta.Base;
+
+            for (int i = start; i < start + length; i++)
+            {
+                int v = MEMORY[baseAddr + i];
+
+                switch (mode)
+                {
+                    case 0: v = v + val; break;
+                    case 1: v = v - val; break;
+                    case 2: v = v * val; break;
+                    case 3: v = v / val; break;
+                    default: v = v % val; break;
+                }
+
+                MEMORY[baseAddr + i] = v;
+            }
+
+            return true;
+        }
+
+        static void FLES(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 0);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간에서 값 미만인 원소만 남기고 패킹
+        static void FLOE(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 1);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 값 이하
+        static void FGOE(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 2);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 값 이상
+        static void FGRT(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 3);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 값 초과
+        static void FEQL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 값과 같음
+        static void FNQL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = FilterRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 5);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 값과 다름
+
+        static void MPLS(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 0);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간에 값을 더함
+        static void MMNS(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 1);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간에서 값을 뺌
+        static void MMLT(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 2);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간에 값을 곱함
+        static void MDIV(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 3);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간을 값으로 나눔
+        static void MMDL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            bool ok = MapRange(reg[ip[2]], reg[ip[3]], reg[ip[5]], reg[ip[6]], 4);
+            reg[ip[1]] = ok ? 1 : 0;
+        } // 구간을 값으로 나눈 나머지
+
+        static void CLON(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            int srcId = reg[ip[2]];
+
+            reg[ip[1]] = 0;
+
+            if (!IsValidID(srcId))
+                return;
+
+            if (Metadatas[srcId].Exists == 0)
+                return;
+
+            var src = Metadatas[srcId];
+            int newId = AllocateArrayBlock(src.Length);
+
+            if (newId == 0)
+                return;
+
+            // AllocateArrayBlock 내부에서 Compact()가 걸렸을 수 있어 src.Base가
+            // 이동했을 수 있으므로 복사 직전에 메타데이터를 다시 읽는다.
+            src = Metadatas[srcId];
+            var dst = Metadatas[newId];
+
+            Array.Copy(MEMORY, src.Base, MEMORY, dst.Base, src.Length);
+
+            reg[ip[1]] = newId;
+        } // 배열을 통째로 복제하고 새 배열ID를 반환
+
+        static void CHNG(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            int id1 = reg[ip[2]];
+            int id2 = reg[ip[3]];
+
+            reg[ip[1]] = 0;
+
+            if (!IsValidID(id1) || !IsValidID(id2))
+                return;
+
+            if (Metadatas[id1].Exists == 0 || Metadatas[id2].Exists == 0)
+                return;
+
+            // FREE와 동일한 이유로 현재 실행 중이거나 콜스택에 걸린 배열은 교환 금지
+            if (id1 == CurrentArrayBlock || id2 == CurrentArrayBlock)
+                return;
+
+            for (int i = 0; i <= FrameTop; i++)
+                if (Frames[i].Self == id1 || Frames[i].Self == id2)
+                    return;
+
+            var m1 = Metadatas[id1];
+            var m2 = Metadatas[id2];
+
+            m1.ID = id2;
+            m2.ID = id1;
+
+            Metadatas[id1] = m2;
+            Metadatas[id2] = m1;
+
+            reg[ip[1]] = 1;
+        } // 두 배열ID가 가리키는 내용(Base/Length 등)을 맞바꿈 (데이터 복사 없이 O(1))
+
+        static void RVRS(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            int id = reg[ip[2]];
+
+            reg[ip[1]] = 0;
+
+            if (!IsValidID(id))
+                return;
+
+            if (Metadatas[id].Exists == 0)
+                return;
+
+            var meta = Metadatas[id];
+            int baseAddr = meta.Base;
+            int len = meta.Length;
+
+            for (int i = 0, j = len - 1; i < j; i++, j--)
+            {
+                int tmp = MEMORY[baseAddr + i];
+                MEMORY[baseAddr + i] = MEMORY[baseAddr + j];
+                MEMORY[baseAddr + j] = tmp;
+            }
+
+            reg[ip[1]] = 1;
+        } // 배열 전체를 반전
+
+        static void SHFL(int* ip, FRAME* frame)
+        {
+            int* reg = frame->Registers;
+            int id = reg[ip[2]];
+
+            reg[ip[1]] = 0;
+
+            if (!IsValidID(id))
+                return;
+
+            if (Metadatas[id].Exists == 0)
+                return;
+
+            var meta = Metadatas[id];
+            int baseAddr = meta.Base;
+            int len = meta.Length;
+
+            for (int i = len - 1; i > 0; i--)
+            {
+                int j = _rng.Next(i + 1);
+
+                int tmp = MEMORY[baseAddr + i];
+                MEMORY[baseAddr + i] = MEMORY[baseAddr + j];
+                MEMORY[baseAddr + j] = tmp;
+            }
+
+            reg[ip[1]] = 1;
+        } // 배열 전체를 무작위로 섞음 (SORT mode=2와 동일한 Fisher-Yates)
+
         static void RNDM(int* ip, FRAME* frame)
         {
             int* reg = frame->Registers;
@@ -1921,5 +2262,3 @@ namespace Gwalho
 
     }
 }
-
- 
